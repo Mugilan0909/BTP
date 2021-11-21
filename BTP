@@ -1,0 +1,123 @@
+#include "grid/quadtree.h"
+#include "navier-stokes/centered.h"
+#include "tracer.h"
+#include "diffusion.h"
+
+// three tracers.
+scalar f1[], f2[], f3[];
+scalar * tracers = {f1, f2, f3};
+
+// container for viscosity
+face vector muv[];
+
+// fluid properties
+double Rc = 3.0;
+double Da = 10.0;
+double Re = 1000.0;
+double Pe = 10000.0;
+
+// fluid boundary conditions
+u.t[bottom] = dirichlet(0.0);
+u.n[bottom] = dirichlet(0.0);
+
+u.t[top]   = dirichlet(0.0);
+u.n[top]   = dirichlet(0.0);
+
+u.t[left] = dirichlet(0.0);
+u.n[left]  = dirichlet(6.0*y*(1.0-y));
+p[left]    = neumann(0.);
+pf[left]   = neumann(0.);
+
+u.t[right] = neumann(0.);
+u.n[right]  = neumann(0.);
+p[right]   = dirichlet(0.);
+pf[right]  = dirichlet(0.);
+// tracer boundary conditions
+f1[left] = dirichlet(1.0);
+f2[left] = dirichlet(0.0);
+f3[left] = dirichlet(0.0);
+
+mgstats mgd1, mgd2, mgd3;
+double tmax = 5.0;
+
+int main()
+{
+  L0 = 10.0;
+  N = 1024;
+  mu = muv;
+  TOLERANCE = 1.0e-7;
+  NITERMAX = 100;
+  //DT = 0.1;
+  CFL = 0.3;
+  run();
+}
+
+event init(i=0)
+{
+  mask (y > 1.0 ? top : none);
+  foreach()
+  {
+    f1[] = 0.0;
+    f2[] = 1.0;
+    f3[] = 0.0;
+  }
+  boundary({f1, f2, f3});
+
+  foreach_face(x)
+  {
+    u.x[] = 6.0*y*(1.0-y);
+  }
+
+  foreach_face(y)
+  {
+    u.y[] = 0.0;
+  }
+  boundary((scalar *){u});
+}
+
+event properties (i++; t<=tmax)
+{
+  foreach_face()
+    muv.x[] = fm.x[]*exp(Rc*f3[]);
+
+  boundary((scalar *){muv});
+}
+
+event tracer_diffusion (i++; t<=tmax)
+{
+  dt = dtnext (dt);
+  const face vector D[] = {1.0/Pe, 1.0/Pe};
+
+  scalar r1[], beta1[];
+  foreach() {
+    r1[] = 0.0;
+    beta1[] = -Da*f2[];
+  }
+  mgd1 = diffusion (f1, dt, D, r = r1, beta = beta1);
+
+  scalar r2[], beta2[];
+  foreach() {
+    r2[] = 0.0;
+    beta2[] = -Da*f1[];
+  }
+  mgd2 = diffusion (f2, dt, D, r = r2, beta = beta2);
+
+  scalar r3[], beta3[];
+  foreach() {
+    r3[] = Da*f2[]*f1[];
+    beta3[] = 0.0;
+  }
+  mgd3 = diffusion (f3, dt, D, r = r3, beta = beta3);
+}
+
+event movie (i = 1; i += 1)
+{
+  output_ppm (f1, file = "f1.mp4",  min = 0, max = 1, box = {{0,0},{10,1}});
+  output_ppm (f2, file = "f2.mp4",  min = 0, max = 1, box = {{0,0},{10,1}});
+  output_ppm (f3, file = "f3.mp4",  min = 0, max = 1, box = {{0,0},{10,1}});
+  fprintf (stderr, "%d %g %g %d %d\n", i, t, dt, mgd1.i, mgd2.i);
+}
+
+event adapt (i++) {
+  adapt_wavelet ((scalar *){u}, (double[]){1e-4,1e-4}, 10, 4);
+}
